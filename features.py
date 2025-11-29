@@ -2,6 +2,47 @@ import pandas as pd
 import talib
 import numpy as np
 
+def add_aroon_stochastic(
+    df,
+    high_col='high',
+    low_col='low',
+    aroon_length=14,
+    stoch_length=14,
+    smooth_d=3,
+    prefix='aroon'
+):  
+    fe = pd.DataFrame()
+    high = df[high_col].shift(1)
+    low = df[low_col].shift(1)
+
+    d_up = high.rolling(aroon_length).apply(
+        lambda x: np.argmax(x[::-1]),  # 0 = most recent, aroon_length-1 = oldest
+        raw=True
+    )
+    d_down = low.rolling(aroon_length).apply(
+        lambda x: np.argmin(x[::-1]),
+        raw=True
+    )
+
+    denom = (aroon_length - 1)
+    df[f'{prefix}_up'] = 100 * (denom - d_up) / denom
+    df[f'{prefix}_down'] = 100 * (denom - d_down) / denom
+
+    df[f'{prefix}_osc'] = df[f'{prefix}_up'] - df[f'{prefix}_down']
+
+    ao = df[f'{prefix}_osc']
+    ao_min = ao.rolling(stoch_length).min()
+    ao_max = ao.rolling(stoch_length).max()
+    ao_range = ao_max - ao_min
+
+    stoch_k = 100 * (ao - ao_min) / ao_range
+    stoch_k = stoch_k.where(ao_range != 0, other=50)
+
+    fe[f'{prefix}_stoch_k'] = stoch_k
+    fe[f'{prefix}_stoch_d'] = stoch_k.rolling(smooth_d).mean()
+
+    return fe
+
 def construct_features(df):
     X = pd.DataFrame()
         
@@ -65,4 +106,14 @@ def construct_features(df):
     denom = hhv - llv
     X['WilliamR'] = (hhv - df['close'].shift(1)) / denom.replace(0, np.nan)
     X['doubleEMA'] = talib.DEMA(df['close'].shift(1), timeperiod=10)
+
+    h_l = df['high'].shift(1) - df['low'].shift(1)
+    h_prev_close = (df['high'].shift(1)-df['close'].shift(2)).abs()
+    l_prev_close = (df['low'].shift(1)-df['close'].shift(2)).abs()
+
+    tr = pd.concat([h_l, h_prev_close, l_prev_close], axis = 1).max(axis = 1)
+    X['ATR5'] = tr.rolling(5).mean()
+    X['ATR10'] = tr.rolling(10).mean()
+
+    X = X.join(add_aroon_stochastic(df))
     return X
